@@ -19,6 +19,37 @@ const Register = () => {
     };
   }, []);
 
+  // Función para guardar en IndexedDB
+  const insertIndexedDB = (data) => {
+    const dbRequest = window.indexedDB.open("database", 2);
+
+    dbRequest.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains("Usuarios")) {
+        db.createObjectStore("Usuarios", { keyPath: "email" });
+      }
+    };
+
+    dbRequest.onsuccess = (event) => {
+      const db = event.target.result;
+      const transaction = db.transaction("Usuarios", "readwrite");
+      const objStore = transaction.objectStore("Usuarios");
+
+      const addRequest = objStore.add(data);
+      addRequest.onsuccess = () => {
+        console.log("✅ Datos guardados en IndexedDB:", addRequest.result);
+        if ('serviceWorker' in navigator && 'SyncManager' in window) {
+          navigator.serviceWorker.ready
+            .then((registration) => registration.sync.register("syncUsuarios"))
+            .catch((err) => console.error("❌ Error en la sincronización:", err));
+        }
+      };
+      addRequest.onerror = () => console.error("❌ Error insertando en IndexedDB");
+    };
+
+    dbRequest.onerror = () => console.error("❌ Error abriendo IndexedDB");
+  };
+
   const handleRegister = async (e) => {
     e.preventDefault();
   
