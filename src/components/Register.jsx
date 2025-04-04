@@ -19,15 +19,46 @@ const Register = () => {
     };
   }, []);
 
+  // Función para guardar en IndexedDB
+  const insertIndexedDB = (data) => {
+    const dbRequest = window.indexedDB.open("database", 2);
+
+    dbRequest.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains("Usuarios")) {
+        db.createObjectStore("Usuarios", { keyPath: "email" });
+      }
+    };
+
+    dbRequest.onsuccess = (event) => {
+      const db = event.target.result;
+      const transaction = db.transaction("Usuarios", "readwrite");
+      const objStore = transaction.objectStore("Usuarios");
+
+      const addRequest = objStore.add(data);
+      addRequest.onsuccess = () => {
+        console.log("✅ Datos guardados en IndexedDB:", addRequest.result);
+        if ('serviceWorker' in navigator && 'SyncManager' in window) {
+          navigator.serviceWorker.ready
+            .then((registration) => registration.sync.register("syncUsuarios"))
+            .catch((err) => console.error("❌ Error en la sincronización:", err));
+        }
+      };
+      addRequest.onerror = () => console.error("❌ Error insertando en IndexedDB");
+    };
+
+    dbRequest.onerror = () => console.error("❌ Error abriendo IndexedDB");
+  };
+
   const handleRegister = async (e) => {
     e.preventDefault();
-    
+  
     if (!isOnline) {
       setError('No estás conectado a Internet. Los datos se guardarán localmente.');
       insertIndexedDB({ email, nombre, password });
       return;
     }
-
+  
     try {
       const response = await fetch('https://servidorpwa.onrender.com/auth/register', {
         method: 'POST',
@@ -36,9 +67,9 @@ const Register = () => {
         },
         body: JSON.stringify({ email, nombre, password }),
       });
-
+  
       const data = await response.json();
-
+  
       if (response.ok) {
         alert('Registro exitoso. Ahora puedes iniciar sesión.');
         navigate('/login');
@@ -50,58 +81,9 @@ const Register = () => {
     }
   };
 
-  function insertIndexedDB(data) {
-    let dbRequest = window.indexedDB.open("database", 2);
-
-    dbRequest.onupgradeneeded = (event) => {
-      const db = event.target.result;
-      if (!db.objectStoreNames.contains("Usuarios")) {
-        db.createObjectStore("Usuarios", { keyPath: "email" });
-        console.log("✅ 'Usuarios' object store creado.");
-      }
-    };
-
-    dbRequest.onsuccess = (event) => {
-      const db = event.target.result;
-
-      if (db.objectStoreNames.contains("Usuarios")) {
-        const transaction = db.transaction("Usuarios", "readwrite");
-        const objStore = transaction.objectStore("Usuarios");
-
-        const addRequest = objStore.add(data);
-
-        addRequest.onsuccess = () => {
-          console.log("✅ Datos insertados en IndexedDB:", addRequest.result);
-          
-          if ('serviceWorker' in navigator && 'SyncManager' in window) {
-            navigator.serviceWorker.ready.then((registration) => {
-              console.log("Intentando registrar la sincronización...");
-              registration.sync.register("syncUsuarios");
-              self.registration.sync.register("sync"); 
-            }).then(() => {
-              console.log("✅ Sincronización registrada con éxito");
-            }).catch((err) => {
-              console.error("❌ Error registrando la sincronización:", err);
-            });
-          } else {
-            console.warn("⚠️ Background Sync no es soportado en este navegador.");
-          }
-        };
-
-        addRequest.onerror = () => {
-          console.error("❌ Error insertando en IndexedDB");
-        };
-      }
-    };
-
-    dbRequest.onerror = () => {
-      console.error("❌ Error abriendo IndexedDB");
-    };
-  }
-  
   return (
     <div style={styles.container}>
-      <form style={styles.form} onSubmit={handleRegister}>
+      <form onSubmit={handleRegister} style={styles.form}>
         <h2 style={styles.heading}>Registro</h2>
         {error && <div style={styles.error}>{error}</div>}
         <input
@@ -110,6 +92,7 @@ const Register = () => {
           value={nombre}
           onChange={(e) => setNombre(e.target.value)}
           style={styles.input}
+          required
         />
         <input
           type="email"
@@ -117,6 +100,7 @@ const Register = () => {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           style={styles.input}
+          required
         />
         <input
           type="password"
@@ -124,12 +108,14 @@ const Register = () => {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           style={styles.input}
+          required
         />
         <button type="submit" style={styles.button}>Registrar</button>
       </form>
     </div>
   );
 };
+
 // Estilos mejorados
 const styles = {
   container: {
