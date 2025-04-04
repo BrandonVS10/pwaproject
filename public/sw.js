@@ -184,7 +184,7 @@ self.addEventListener("push", (event) => {
 
   let options={
       body:event.data.text(),
-       body: "Bienvenido a zona futbolera",
+  
       image: "./icons/fut1.png",
   }
   
