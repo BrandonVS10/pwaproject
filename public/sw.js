@@ -2,37 +2,34 @@ const APP_SHELL_CACHE = 'AppShellv6';
 const DYNAMIC_CACHE = 'DinamicoV6';
 
 const APP_SHELL_FILES = [
-  '/', 
-  '/index.html', 
-  '/offline.html',
-  '/index.css',
-  '/App.css',
-  '/App.jsx',
-  '/main.jsx',
-  '/components/Home.jsx',
-  '/components/Login.jsx',
-  '/components/Register.jsx',
-  '/icons/sao_1.png',
-  '/icons/sao_2.png',
-  '/icons/sao_3.png',
-  '/icons/carga.png',
-  '/screenshots/cap.png',
-  '/screenshots/cap1.png'
+  '/', '/index.html', '/offline.html', '/index.css', '/App.css',
+  '/App.jsx', '/main.jsx', '/components/Home.jsx',
+  '/components/Login.jsx', '/components/Register.jsx',
+  '/icons/sao_1.png', '/icons/sao_2.png', '/icons/sao_3.png',
+  '/icons/carga.png', '/screenshots/cap.png', '/screenshots/cap1.png'
 ];
 
 self.addEventListener('install', event => {
-  self.skipWaiting();  // Forzar la instalación del nuevo SW
-});
-
-// Instalación del Service Worker y caché
-self.addEventListener('install', event => {
+  self.skipWaiting();
   event.waitUntil(
     caches.open(APP_SHELL_CACHE).then(cache => cache.addAll(APP_SHELL_FILES))
   );
-  self.skipWaiting();
 });
 
-// Guardar en IndexedDB en caso de fallo de red
+self.addEventListener('activate', event => {
+  event.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(
+        keys.map(key => {
+          if (key !== APP_SHELL_CACHE && key !== DYNAMIC_CACHE) {
+            return caches.delete(key);
+          }
+        })
+      )
+    ).then(() => self.clients.claim())
+  );
+});
+
 function InsertIndexedDB(data) {
   const dbRequest = indexedDB.open("database", 2);
 
@@ -44,50 +41,38 @@ function InsertIndexedDB(data) {
   };
 
   dbRequest.onsuccess = event => {
-    let db = event.target.result;
-    let transaction = db.transaction("Usuarios", "readwrite");
-    let store = transaction.objectStore("Usuarios");
-
-    let request = store.add(data);
-    request.onsuccess = () => {
-      console.log("Datos guardados en IndexedDB");
+    const db = event.target.result;
+    const tx = db.transaction("Usuarios", "readwrite");
+    const store = tx.objectStore("Usuarios");
+    store.add(data).onsuccess = () => {
+      console.log("📦 Guardado en IndexedDB.");
       if (self.registration.sync) {
-        self.registration.sync.register("syncUsuarios").catch(err => {
-          console.error("Error al registrar la sincronización:", err);
-        });
+        self.registration.sync.register("syncUsuarios").catch(console.error);
       }
     };
-
-    request.onerror = event => console.error("Error al guardar en IndexedDB:", event.target.error);
   };
-
-  dbRequest.onerror = event => console.error("Error al abrir IndexedDB:", event.target.error);
 }
 
-// Interceptar solicitudes
 self.addEventListener('fetch', event => {
-  if (!event.request.url.startsWith("http")) return; // Evita problemas con extensiones
+  if (!event.request.url.startsWith("http")) return;
 
   if (event.request.method === "POST") {
     event.respondWith(
       event.request.clone().json()
-        .then(body => 
-          fetch(event.request)
-            .catch(() => {
-              InsertIndexedDB(body);
-              return new Response(JSON.stringify({ message: "Datos guardados offline" }), {
-                headers: { "Content-Type": "application/json" }
-              });
-            })
-        )
-        .catch(error => console.error("Error en fetch POST:", error))
+        .then(body => fetch(event.request).catch(() => {
+          InsertIndexedDB(body);
+          return new Response(JSON.stringify({ message: "Guardado offline" }), {
+            headers: { "Content-Type": "application/json" }
+          });
+        }))
+        .catch(console.error)
     );
   } else {
     event.respondWith(
       fetch(event.request)
         .then(response => {
-          let clone = response.clone();
-          caches.open(DYNAMIC_CACHE).then(cache => cache.put(event.request, clone));
+          const resClone = response.clone();
+          caches.open(DYNAMIC_CACHE).then(cache => cache.put(event.request, resClone));
           return response;
         })
         .catch(() => caches.match(event.request))
@@ -95,99 +80,54 @@ self.addEventListener('fetch', event => {
   }
 });
 
-// Sincronización en segundo plano
 self.addEventListener('sync', event => {
   if (event.tag === "syncUsuarios") {
-    event.waitUntil(
-      new Promise((resolve, reject) => {
-        let dbRequest = indexedDB.open("database", 2);
+    event.waitUntil(new Promise((resolve, reject) => {
+      const dbRequest = indexedDB.open("database", 2);
 
-        dbRequest.onsuccess = event => {
-          let db = event.target.result;
+      dbRequest.onsuccess = event => {
+        const db = event.target.result;
+        const tx = db.transaction("Usuarios", "readonly");
+        const store = tx.objectStore("Usuarios");
+        const getAllRequest = store.getAll();
 
-          if (!db.objectStoreNames.contains("Usuarios")) {
-            console.error("No hay datos en IndexedDB.");
-            resolve();
-            return;
-          }
+        getAllRequest.onsuccess = () => {
+          const usuarios = getAllRequest.result;
+          if (usuarios.length === 0) return resolve();
 
-          let transaction = db.transaction("Usuarios", "readonly");
-          let store = transaction.objectStore("Usuarios");
-          let getAllRequest = store.getAll();
+          const requests = usuarios.map(user =>
+            fetch('https://backend-be7l.onrender.com/auth/register', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(user)
+            })
+          );
 
-          getAllRequest.onsuccess = () => {
-            let usuarios = getAllRequest.result;
-            if (usuarios.length === 0) {
-              console.log("No hay usuarios para sincronizar.");
+          Promise.all(requests).then(responses => {
+            if (responses.every(r => r.ok)) {
+              const txDelete = db.transaction("Usuarios", "readwrite");
+              txDelete.objectStore("Usuarios").clear().onsuccess = () =>
+                console.log("✅ Usuarios sincronizados y eliminados.");
               resolve();
-              return;
+            } else {
+              console.warn("⚠️ Algunas respuestas fallaron.");
+              resolve();
             }
-
-            let postPromises = usuarios.map(user =>
-              fetch('https://backend-be7l.onrender.com/auth/register', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(user)
-              })
-            );
-
-            Promise.all(postPromises)
-              .then(responses => {
-                let success = responses.every(response => response.ok);
-                if (success) {
-                  let deleteTransaction = db.transaction("Usuarios", "readwrite");
-                  let deleteStore = deleteTransaction.objectStore("Usuarios");
-                  deleteStore.clear().onsuccess = () => console.log("Usuarios sincronizados y eliminados.");
-                } else {
-                  console.error("Algunas respuestas fallaron:", responses);
-                }
-              })
-              .catch(error => {
-                console.error("Error al sincronizar con la API:", error);
-                reject(error);
-              });
-          };
-
-          getAllRequest.onerror = () => {
-            console.error("Error al obtener datos de IndexedDB:", getAllRequest.error);
-            reject(getAllRequest.error);
-          };
+          }).catch(reject);
         };
 
-        dbRequest.onerror = event => {
-          console.error("Error al abrir IndexedDB:", event.target.error);
-          reject(event.target.error);
-        };
-      })
-    );
+        getAllRequest.onerror = reject;
+      };
+
+      dbRequest.onerror = reject;
+    }));
   }
 });
-
-// Activación del SW y limpieza de caché antigua
-self.addEventListener('activate', event => {
-  event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(
-        keys.map(key => {
-          if (key !== APP_SHELL_CACHE && key !== DYNAMIC_CACHE) {
-            console.log("Eliminando caché antigua:", key);
-            return caches.delete(key);
-          }
-        })
-      )
-    ).then(() => self.clients.claim())
-  );
-});
-
 
 self.addEventListener("push", (event) => {
-
-  let options={
-      body:event.data.text(),
-  
-      image: "./icons/fut1.png",
-  }
-  
-  self.registration.showNotification("Titulo",options); 
-   
+  const options = {
+    body: event.data.text(),
+    image: "./icons/fut1.png",
+  };
+  self.registration.showNotification("📢 Notificación", options);
 });
