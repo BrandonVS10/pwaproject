@@ -9,6 +9,7 @@ const APP_SHELL_FILES = [
   '/screenshots/cap1.png'
 ];
 
+// Instalación del Service Worker y almacenamiento en caché
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(APP_SHELL_CACHE).then(cache => cache.addAll(APP_SHELL_FILES))
@@ -16,7 +17,7 @@ self.addEventListener('install', event => {
   self.skipWaiting();
 });
 
-// Guardar en IndexedDB si no hay conexión
+// Función para guardar datos en IndexedDB cuando no haya conexión
 function InsertIndexedDB(data) {
   const dbRequest = indexedDB.open("database", 2);
 
@@ -47,7 +48,7 @@ function InsertIndexedDB(data) {
   dbRequest.onerror = event => console.error("Error al abrir IndexedDB:", event.target.error);
 }
 
-// Interceptar solicitudes
+// Interceptar las solicitudes de la red
 self.addEventListener('fetch', event => {
   if (!event.request.url.startsWith("http")) return; // Evita problemas con extensiones
 
@@ -57,7 +58,7 @@ self.addEventListener('fetch', event => {
         .then(body => 
           fetch(event.request)
             .catch(() => {
-              InsertIndexedDB(body);
+              InsertIndexedDB(body);  // Guardar datos en IndexedDB cuando no hay conexión
               return new Response(JSON.stringify({ message: "Datos guardados offline" }), {
                 headers: { "Content-Type": "application/json" }
               });
@@ -70,21 +71,22 @@ self.addEventListener('fetch', event => {
       fetch(event.request)
         .then(response => {
           let clone = response.clone();
-          caches.open(DYNAMIC_CACHE).then(cache => cache.put(event.request, clone));
+          caches.open(DYNAMIC_CACHE).then(cache => cache.put(event.request, clone));  // Guardar respuestas dinámicas
           return response;
         })
-        .catch(() => caches.match(event.request))
+        .catch(() => caches.match(event.request))  // Si no hay conexión, obtener del cache
     );
   }
 });
 
-// Sincronización en segundo plano
+// Sincronización en segundo plano (cuando la conexión se restablezca)
 self.addEventListener('sync', event => {
   if (event.tag === "syncUsuarios") {
     event.waitUntil(sincronizarUsuarios());
   }
 });
 
+// Función para sincronizar datos de usuarios desde IndexedDB a la API
 async function sincronizarUsuarios() {
   const dbRequest = indexedDB.open("database", 2);
 
@@ -171,4 +173,4 @@ self.addEventListener("push", (event) => {
   };
   
   self.registration.showNotification("Titulo", options); 
-});
+}); 
